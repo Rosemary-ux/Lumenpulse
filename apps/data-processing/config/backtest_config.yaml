@@ -1,0 +1,31 @@
+# Reproducible configuration for the walk-forward backtest harness.
+# Changes to this file will change backtest results; commit intentional
+# changes alongside code so that CI and local runs stay in sync.
+#
+# Field documentation
+# -------------------
+# min_train_size : int
+#     Minimum number of historical data-points required in the training
+#     window before the first prediction fold is evaluated.
+#     Smaller values start backtesting sooner but with less history.
+#
+# step_size : int
+#     How many rows to advance the training window between folds.
+#     1  → pure expanding window (most pessimistic; maximum folds).
+#     >1 → faster evaluation with fewer folds.
+#
+# max_folds : int | null
+#     Cap on the total number of evaluated folds.
+#     null → evaluate all available folds.
+#     Setting a cap speeds up CI without materially changing metric estimates
+#     when the data set is large.
+#
+# jsonl_path : str | null
+#     Override the default analytics JSONL path used by SentimentForecaster.
+#     null → use the forecaster's built-in default (ANALYTICS_JSONL_PATH env var
+#     or ./data/analytics.jsonl).
+
+min_train_size: 10
+step_size: 1
+max_folds: 50
+jsonl_path: null

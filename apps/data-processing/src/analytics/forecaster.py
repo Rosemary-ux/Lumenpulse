@@ -44,16 +44,19 @@ _MIN_TRAINING_POINTS = 3
 class ForecastResult:
     """Market trend forecast for the next 24 h and 48 h."""
 
-    predicted_trend_24h: str      # "bullish" | "bearish" | "neutral"
+    predicted_trend_24h: str  # "bullish" | "bearish" | "neutral"
     predicted_trend_48h: str
-    confidence_24h: float         # 0.0 – 1.0
+    confidence_24h: float  # 0.0 – 1.0
     confidence_48h: float
-    sentiment_velocity: float     # Δsentiment per hour (positive → accelerating bullish)
-    forecast_score_24h: float     # predicted market health score at T+24 h
-    forecast_score_48h: float     # predicted market health score at T+48 h
-    model_backend: str            # "prophet" | "sklearn" | "heuristic"
+    sentiment_velocity: float  # Δsentiment per hour (positive → accelerating bullish)
+    forecast_score_24h: float  # predicted market health score at T+24 h
+    forecast_score_48h: float  # predicted market health score at T+48 h
+    model_backend: str  # "prophet" | "sklearn" | "heuristic"
     data_points_used: int
     generated_at: str
+    #: Confidence label derived from walk-forward backtest skill scores.
+    #: "high" | "medium" | "low" | "unknown"
+    backtest_confidence: str = "unknown"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -109,8 +112,8 @@ class SentimentForecaster:
 
     def __init__(self, jsonl_path: Optional[Path] = None) -> None:
         self.jsonl_path: Path = Path(jsonl_path) if jsonl_path else _DEFAULT_JSONL
-        self._model_24h = None   # fitted model / Prophet instance
-        self._model_48h = None   # separate ridge for 48 h (sklearn path)
+        self._model_24h = None  # fitted model / Prophet instance
+        self._model_48h = None  # separate ridge for 48 h (sklearn path)
         self._backend: str = "heuristic"
         self._is_trained: bool = False
 
@@ -161,20 +164,14 @@ class SentimentForecaster:
             logger.warning("analytics.jsonl contained no valid entries")
             return pd.DataFrame()
 
-        df = (
-            pd.DataFrame(records)
-            .sort_values("timestamp")
-            .reset_index(drop=True)
-        )
+        df = pd.DataFrame(records).sort_values("timestamp").reset_index(drop=True)
         logger.info(f"Loaded {len(df)} data points from {jsonl_path}")
         return df
 
     # ── Sentiment velocity ────────────────────────────────────────────────
 
     @staticmethod
-    def compute_sentiment_velocity(
-        df: pd.DataFrame, window: int = 5
-    ) -> float:
+    def compute_sentiment_velocity(df: pd.DataFrame, window: int = 5) -> float:
         """
         Compute how fast sentiment is changing (Δsentiment / Δhours).
 
@@ -191,14 +188,10 @@ class SentimentForecaster:
         if len(recent) < 2:
             return 0.0
 
-        delta_s = (
-            recent["sentiment_score"].iloc[-1] - recent["sentiment_score"].iloc[0]
-        )
+        delta_s = recent["sentiment_score"].iloc[-1] - recent["sentiment_score"].iloc[0]
         delta_h = (
-            (recent["timestamp"].iloc[-1] - recent["timestamp"].iloc[0])
-            .total_seconds()
-            / 3600.0
-        )
+            recent["timestamp"].iloc[-1] - recent["timestamp"].iloc[0]
+        ).total_seconds() / 3600.0
 
         if delta_h < 1e-6:
             return 0.0
@@ -282,7 +275,12 @@ class SentimentForecaster:
             self._is_trained = False
             self._backend = "heuristic"
             logger.warning("Not enough training samples for sklearn; using heuristic")
-            return {"backend": "heuristic", "n_points": n, "r2_24h": None, "r2_48h": None}
+            return {
+                "backend": "heuristic",
+                "n_points": n,
+                "r2_24h": None,
+                "r2_48h": None,
+            }
 
         X = np.array(features)
         y24 = np.array(targets_24h)
@@ -357,12 +355,12 @@ class SentimentForecaster:
             row = df.iloc[i]
             features.append(
                 [
-                    float(i),                               # time index (captures trend)
+                    float(i),  # time index (captures trend)
                     float(row["sentiment_score"]),
                     float(vel),
                     float(row["positive_pct"]),
                     float(row["negative_pct"]),
-                    float(row["news_count"]) / 100.0,       # rough normalisation
+                    float(row["news_count"]) / 100.0,  # rough normalisation
                 ]
             )
             targets_24h.append(
@@ -409,9 +407,7 @@ class SentimentForecaster:
             generated_at=datetime.now(timezone.utc).isoformat(),
         )
 
-    def _predict_prophet(
-        self, df: pd.DataFrame
-    ) -> Tuple[float, float]:
+    def _predict_prophet(self, df: pd.DataFrame) -> Tuple[float, float]:
         if self._model_24h is None or df is None or df.empty:
             return self._predict_heuristic(df)
 
@@ -438,16 +434,20 @@ class SentimentForecaster:
         n = len(df)
         row = df.iloc[-1]
         X = np.array(
-            [[
-                float(n),
-                float(row["sentiment_score"]),
-                float(velocity),
-                float(row["positive_pct"]),
-                float(row["negative_pct"]),
-                float(row["news_count"]) / 100.0,
-            ]]
+            [
+                [
+                    float(n),
+                    float(row["sentiment_score"]),
+                    float(velocity),
+                    float(row["positive_pct"]),
+                    float(row["negative_pct"]),
+                    float(row["news_count"]) / 100.0,
+                ]
+            ]
         )
-        return float(self._model_24h.predict(X)[0]), float(self._model_48h.predict(X)[0])
+        return float(self._model_24h.predict(X)[0]), float(
+            self._model_48h.predict(X)[0]
+        )
 
     @staticmethod
     def _predict_heuristic(
@@ -466,8 +466,8 @@ class SentimentForecaster:
 
         current = float(df["sentiment_score"].iloc[-1])
         decay = 0.85  # velocity impact halves roughly every ~4 h
-        score_24h = current + velocity * float(sum(decay ** t for t in range(24)))
-        score_48h = current + velocity * float(sum(decay ** t for t in range(48)))
+        score_24h = current + velocity * float(sum(decay**t for t in range(24)))
+        score_48h = current + velocity * float(sum(decay**t for t in range(48)))
         return score_24h, score_48h
 
     # ── Model persistence ─────────────────────────────────────────────────
@@ -500,9 +500,25 @@ class SentimentForecaster:
         """
         One-call shortcut: load history → train (if needed) → predict.
 
+        Also runs a lightweight walk-forward backtest to derive a
+        ``backtest_confidence`` label that is included in the returned
+        :class:`ForecastResult` and forwarded to the API response.
+
         Safe to call repeatedly — reuses an existing trained model.
         """
         df = self.load_history(jsonl_path)
         if not self._is_trained:
             self.train(df)
-        return self.predict(df)
+        result = self.predict(df)
+
+        # Attach backtest-derived confidence (best-effort; never raises)
+        try:
+            from src.analytics.backtester import BacktestConfig, run_backtest
+
+            bt_config = BacktestConfig.load()
+            bt_report = run_backtest(config=bt_config, df=df)
+            result.backtest_confidence = bt_report.backtest_confidence
+        except Exception as exc:  # pragma: no cover
+            logger.warning(f"Backtest confidence computation failed: {exc}")
+
+        return result

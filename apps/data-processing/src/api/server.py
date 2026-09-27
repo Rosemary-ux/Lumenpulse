@@ -55,7 +55,10 @@ from src.db import PostgresService
 from src.ingestion.stellar_ingestion_checks import run_all_checks
 from src.privacy import scrub_record, scrub_text
 
-from src.analytics.sentiment_indicators import SentimentIndicatorMapper, get_legend as sentiment_legend
+from src.analytics.sentiment_indicators import (
+    SentimentIndicatorMapper,
+    get_legend as sentiment_legend,
+)
 from src.api.rebuild_routes import router as rebuild_router
 from src.api.sentiment_label_routes import router as sentiment_label_router
 
@@ -112,11 +115,15 @@ async def metrics_and_logging_middleware(request: Request, call_next):
     try:
         response = await call_next(request)
         if response.status_code >= 500:
-            API_FAILURES_TOTAL.labels(method=request.method, endpoint=request.url.path).inc()
+            API_FAILURES_TOTAL.labels(
+                method=request.method, endpoint=request.url.path
+            ).inc()
         response.headers["X-Correlation-ID"] = corr_id
         return response
     except Exception as e:
-        API_FAILURES_TOTAL.labels(method=request.method, endpoint=request.url.path).inc()
+        API_FAILURES_TOTAL.labels(
+            method=request.method, endpoint=request.url.path
+        ).inc()
         logger.error("Unhandled exception during request processing", exc_info=True)
         raise
     finally:
@@ -176,9 +183,7 @@ def _get_embedding_service() -> Any:
         try:
             _embedding_service = EmbeddingService()
         except MissingEmbeddingModelError as exc:
-            logger.warning(
-                "Semantic search embedding model unavailable: %s", exc
-            )
+            logger.warning("Semantic search embedding model unavailable: %s", exc)
             _embedding_service = exc
     return (
         None
@@ -202,6 +207,7 @@ async def _reconcile_orphaned_analytics_jobs() -> None:
 import hashlib
 from typing import Optional
 
+
 def _log_prediction(
     request_id: str,
     model_type: str,
@@ -213,17 +219,19 @@ def _log_prediction(
     """Log prediction to database using PostgresService."""
     if not postgres_service:
         return
-        
+
     try:
         # Prediction request logging follows the same personal-data rules as
         # ingestion: both the stored copy and its hash are derived from the
         # scrubbed text (#1452, doc/personal-data-policy.md).
         scrubbed_input = scrub_text(input_text)
         scrubbed_output = scrub_record(output)
-        store_raw_input = os.getenv("LOG_PREDICTION_RAW_INPUT", "false").lower() == "true"
+        store_raw_input = (
+            os.getenv("LOG_PREDICTION_RAW_INPUT", "false").lower() == "true"
+        )
         raw_input = scrubbed_input if store_raw_input else None
         input_hash = hashlib.sha256(scrubbed_input.encode("utf-8")).hexdigest()
-        
+
         postgres_service.log_prediction(
             request_id=request_id,
             model_type=model_type,
@@ -240,6 +248,7 @@ def _log_prediction(
 # ---------------------------------------------------------------------------
 # Request/Response models
 # ---------------------------------------------------------------------------
+
 
 class SentimentIndicatorResponse(BaseModel):
     """Visual indicator fields attached to every sentiment-bearing response."""
@@ -282,7 +291,9 @@ class AnalyzeResponse(BaseModel):
     asset_codes: List[str] = []  # Asset codes found in text
     sentiment_label: str = ""  # positive/negative/neutral
     indicator: Optional[SentimentIndicatorResponse] = None  # Visual colour indicator
-    explanation: Optional[SentimentExplanationResponse] = None  # Token attribution (#1456)
+    explanation: Optional[SentimentExplanationResponse] = (
+        None  # Token attribution (#1456)
+    )
 
 
 class AssetAnalysisResponse(BaseModel):
@@ -374,7 +385,7 @@ async def root(request: Request) -> Dict[str, Any]:
             "GET /health": "Health check (no auth required)",
             "GET /metrics": "Prometheus metrics (no auth required)",
             "GET /news": "Get recent news with optional ?entity=... filter (requires X-API-Key header)",
-"GET /search/similar": "Rank news by semantic similarity to a query (#1455) (requires X-API-Key header)",
+            "GET /search/similar": "Rank news by semantic similarity to a query (#1455) (requires X-API-Key header)",
             "POST /analyze": "Analyze text sentiment (requires X-API-Key header; set explain=true to include token-level attribution #1456)",
             "GET /analyze": "Get asset-specific sentiment analysis (requires X-API-Key header)",
             "POST /analyze-batch": "Batch analyze multiple texts (requires X-API-Key header)",
@@ -427,7 +438,9 @@ async def get_news(
     request: Request,
     limit: int = Query(50, ge=1, le=500),
     hours: int = Query(24, ge=1, le=168),
-    asset: Optional[str] = Query(None, description="Optional primary asset code filter"),
+    asset: Optional[str] = Query(
+        None, description="Optional primary asset code filter"
+    ),
     entity: Optional[str] = Query(
         None,
         description="Optional detected entity filter (example: Soroban)",
@@ -523,9 +536,7 @@ async def search_similar(
         query_vector = embedding_service.embed(q)
     except Exception as exc:
         logger.error("Failed to embed search query: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=503, detail="Semantic search model unavailable"
-        )
+        raise HTTPException(status_code=503, detail="Semantic search model unavailable")
 
     results = postgres_service.search_articles_by_embedding(
         query_vector=query_vector,
@@ -600,9 +611,7 @@ async def analyze_text(body: AnalyzeRequest, request: Request) -> AnalyzeRespons
             raise HTTPException(status_code=400, detail="Text cannot be empty")
 
         # Use your existing SentimentAnalyzer with asset filter
-        result = sentiment_analyzer.analyze(
-            body.text, body.asset, explain=body.explain
-        )
+        result = sentiment_analyzer.analyze(body.text, body.asset, explain=body.explain)
 
         logger.info(
             f"Analyzed text: '{body.text[:50]}...' -> sentiment: {result.compound_score} | "
@@ -650,11 +659,11 @@ async def analyze_text(body: AnalyzeRequest, request: Request) -> AnalyzeRespons
 @limiter.limit("30/minute") if limiter else lambda x: x
 async def get_asset_analysis(
     request: Request,
-    asset: str = Query(..., description="Asset code (e.g., XLM, USDC, BTC)")
+    asset: str = Query(..., description="Asset code (e.g., XLM, USDC, BTC)"),
 ) -> AssetAnalysisResponse:
     """
     Get sentiment analysis for a specific asset.
-    
+
     This endpoint provides asset-specific sentiment analysis by filtering
     news and social media content that mentions the specified asset.
 
@@ -667,15 +676,17 @@ async def get_asset_analysis(
     try:
         if not asset or not asset.strip():
             raise HTTPException(status_code=400, detail="Asset code cannot be empty")
-        
+
         asset = asset.upper().strip()
-        
+
         # For now, return a mock response since we need to integrate with actual data sources
         # In a real implementation, this would query the database for recent sentiment data
         # related to the specific asset
-        
-        logger.info(f"Requested asset analysis for: {asset} | client_ip: {request.client.host}")
-        
+
+        logger.info(
+            f"Requested asset analysis for: {asset} | client_ip: {request.client.host}"
+        )
+
         # Mock response - replace with actual database query
         mock_score = 0.0
         ind = _indicator_mapper.score_to_indicator(mock_score)
@@ -701,7 +712,9 @@ async def get_asset_analysis(
 # ---------------------------------------------------------------------------
 @app.post("/analyze-batch")
 @limiter.limit("10/minute") if limiter else lambda x: x
-async def analyze_batch(request: Request, texts: list[str], asset: Optional[str] = None) -> Dict[str, Any]:
+async def analyze_batch(
+    request: Request, texts: list[str], asset: Optional[str] = None
+) -> Dict[str, Any]:
     """Batch analyze multiple texts with optional asset filter.
 
     Backpressure controls:
@@ -760,20 +773,24 @@ async def analyze_batch(request: Request, texts: list[str], asset: Optional[str]
         item_results: list[Dict[str, Any]] = []
         for idx, (text, result) in enumerate(zip(texts, results)):
             try:
-                item_results.append({
-                    "index": idx,
-                    "text": text[:100],
-                    "status": "ok",
-                    **result.to_dict(),
-                })
+                item_results.append(
+                    {
+                        "index": idx,
+                        "text": text[:100],
+                        "status": "ok",
+                        **result.to_dict(),
+                    }
+                )
             except Exception as item_exc:
                 logger.warning("Item %d failed: %s", idx, item_exc)
-                item_results.append({
-                    "index": idx,
-                    "text": text[:100] if text else "",
-                    "status": "error",
-                    "error": str(item_exc),
-                })
+                item_results.append(
+                    {
+                        "index": idx,
+                        "text": text[:100] if text else "",
+                        "status": "error",
+                        "error": str(item_exc),
+                    }
+                )
 
         # --- 5. Build response -------------------------------------------------
         req_id = correlation_id_ctx.get(generate_correlation_id())
@@ -798,7 +815,9 @@ async def analyze_batch(request: Request, texts: list[str], asset: Optional[str]
 
         # Recompute summary from successful items only
         successful = [r for r in results if r is not None]
-        summary = sentiment_analyzer.get_sentiment_summary(successful) if successful else {}
+        summary = (
+            sentiment_analyzer.get_sentiment_summary(successful) if successful else {}
+        )
 
         return {
             "results": item_results,
@@ -807,9 +826,9 @@ async def analyze_batch(request: Request, texts: list[str], asset: Optional[str]
             "errors": sum(1 for r in item_results if r.get("status") == "error"),
             "asset_filter": asset,
             "latency_ms": round(latency_ms, 2),
-            "concurrency_slots_remaining": MAX_CONCURRENT_BATCHES - _batch_semaphore._value,
+            "concurrency_slots_remaining": MAX_CONCURRENT_BATCHES
+            - _batch_semaphore._value,
         }
-
 
 
 @app.get("/sentiment/legend")
@@ -852,6 +871,7 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 # Model retraining endpoints (Issue #454; async job queue: #1248)
 # ---------------------------------------------------------------------------
+
 
 class RetrainRequest(BaseModel):
     force: bool = False  # Skip quality gates when True
@@ -899,7 +919,10 @@ async def trigger_retraining(
         work_fn=lambda: run_retraining(force=body.force),
     )
     return JobSubmitResponse(
-        job_id=job["job_id"], job_type=job["job_type"], status=job["status"], created=created
+        job_id=job["job_id"],
+        job_type=job["job_type"],
+        status=job["status"],
+        created=created,
     )
 
 
@@ -924,7 +947,7 @@ async def model_status(request: Request) -> ModelStatusResponse:
 
 class ShadowRegisterRequest(BaseModel):
     model_type: str  # e.g. "sentiment", "price_predictor"
-    version: str     # e.g. "v1.2"
+    version: str  # e.g. "v1.2"
 
 
 class ShadowRegisterResponse(BaseModel):
@@ -1168,9 +1191,7 @@ async def model_rollback(
     if target == previous_live:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Target version '{target}' is already the current live version."
-            ),
+            detail=(f"Target version '{target}' is already the current live version."),
         )
 
     if target not in available:
@@ -1184,6 +1205,7 @@ async def model_rollback(
 
     # Promote the targeted version
     from src.ml.model_registry import promote_model
+
     promote_model(body.model_type, target)
 
     # Also clear any shadow so it doesn't conflict
@@ -1225,7 +1247,9 @@ async def shadow_status(request: Request) -> AllShadowStatusResponse:
 async def shadow_comparison_report(
     request: Request,
     model_type: str = Query(..., description="Model type, e.g. 'sentiment'"),
-    window_hours: int = Query(24, ge=1, le=720, description="Time window in hours (1–720)"),
+    window_hours: int = Query(
+        24, ge=1, le=720, description="Time window in hours (1–720)"
+    ),
 ) -> ComparisonReportResponse:
     """
     Generate a comparison report between live and shadow model predictions.
@@ -1270,7 +1294,9 @@ async def shadow_comparison_report(
 async def shadow_comparison_log(
     request: Request,
     model_type: str = Query(..., description="Model type, e.g. 'sentiment'"),
-    window_hours: int = Query(24, ge=1, le=720, description="Time window in hours (1–720)"),
+    window_hours: int = Query(
+        24, ge=1, le=720, description="Time window in hours (1–720)"
+    ),
     limit: int = Query(1000, ge=1, le=10000),
 ) -> ComparisonLogResponse:
     """
@@ -1321,6 +1347,7 @@ async def shadow_clear_comparison_log(
 # Predictive analytics endpoint (forecast market trends)
 # ---------------------------------------------------------------------------
 
+
 @app.get("/model/prediction-logs")
 @limiter.limit("20/minute") if limiter else lambda x: x
 async def get_prediction_logs(
@@ -1336,19 +1363,19 @@ async def get_prediction_logs(
     """
     if postgres_service is None:
         raise HTTPException(status_code=503, detail="Database service unavailable")
-        
+
     logs = postgres_service.query_prediction_logs(
         model_version=model_version,
         model_type=model_type,
         limit=limit,
         offset=offset,
     )
-    
+
     return {
         "model_version": model_version,
         "model_type": model_type,
         "count": len(logs),
-        "logs": logs
+        "logs": logs,
     }
 
 
@@ -1365,6 +1392,9 @@ class ForecastResponse(BaseModel):
     model_backend: str
     data_points_used: int
     generated_at: str
+    #: Confidence label derived from walk-forward backtest skill scores.
+    #: One of "high", "medium", "low", "unknown".
+    backtest_confidence: str = "unknown"
 
 
 @app.get("/analytics/forecast", response_model=ForecastResponse)
@@ -1456,7 +1486,9 @@ async def analyze_correlation(
     """
     from src.jobs.manager import submit_job
 
-    sentiment_list = [{"timestamp": dp.timestamp, "score": dp.score} for dp in body.sentiment_data]
+    sentiment_list = [
+        {"timestamp": dp.timestamp, "score": dp.score} for dp in body.sentiment_data
+    ]
     price_list = (
         [{"timestamp": dp.timestamp, "value": dp.value} for dp in body.price_data]
         if body.price_data
@@ -1499,11 +1531,16 @@ async def analyze_correlation(
         work_fn=_run,
     )
     return JobSubmitResponse(
-        job_id=job["job_id"], job_type=job["job_type"], status=job["status"], created=created
+        job_id=job["job_id"],
+        job_type=job["job_type"],
+        status=job["status"],
+        created=created,
     )
 
 
-@app.post("/correlation/lag-analysis", response_model=JobSubmitResponse, status_code=202)
+@app.post(
+    "/correlation/lag-analysis", response_model=JobSubmitResponse, status_code=202
+)
 @limiter.limit("10/minute") if limiter else lambda x: x
 async def analyze_lag_correlation(
     body: LagAnalysisRequest,
@@ -1519,8 +1556,12 @@ async def analyze_lag_correlation(
     """
     from src.jobs.manager import submit_job
 
-    sentiment_list = [{"timestamp": dp.timestamp, "score": dp.score} for dp in body.sentiment_data]
-    metric_list = [{"timestamp": dp.timestamp, "value": dp.value} for dp in body.metric_data]
+    sentiment_list = [
+        {"timestamp": dp.timestamp, "score": dp.score} for dp in body.sentiment_data
+    ]
+    metric_list = [
+        {"timestamp": dp.timestamp, "value": dp.value} for dp in body.metric_data
+    ]
 
     logger.info(
         f"Lag correlation analysis submitted | metric_type={body.metric_type} | "
@@ -1552,7 +1593,10 @@ async def analyze_lag_correlation(
         work_fn=_run,
     )
     return JobSubmitResponse(
-        job_id=job["job_id"], job_type=job["job_type"], status=job["status"], created=created
+        job_id=job["job_id"],
+        job_type=job["job_type"],
+        status=job["status"],
+        created=created,
     )
 
 
@@ -1573,7 +1617,9 @@ class DailyKPISnapshotResponse(BaseModel):
     created_at: Optional[str] = None
 
 
-@app.get("/analytics/kpis/daily-snapshots", response_model=List[DailyKPISnapshotResponse])
+@app.get(
+    "/analytics/kpis/daily-snapshots", response_model=List[DailyKPISnapshotResponse]
+)
 @limiter.limit("30/minute") if limiter else lambda x: x
 async def get_daily_kpi_snapshots(
     request: Request,
@@ -1612,7 +1658,11 @@ async def get_daily_kpi_snapshots(
     ]
 
 
-@app.post("/analytics/kpis/daily-snapshots/run", response_model=JobSubmitResponse, status_code=202)
+@app.post(
+    "/analytics/kpis/daily-snapshots/run",
+    response_model=JobSubmitResponse,
+    status_code=202,
+)
 @limiter.limit("10/minute") if limiter else lambda x: x
 async def trigger_daily_kpi_snapshot(
     request: Request,
@@ -1642,5 +1692,8 @@ async def trigger_daily_kpi_snapshot(
         work_fn=_run,
     )
     return JobSubmitResponse(
-        job_id=job["job_id"], job_type=job["job_type"], status=job["status"], created=created
+        job_id=job["job_id"],
+        job_type=job["job_type"],
+        status=job["status"],
+        created=created,
     )
